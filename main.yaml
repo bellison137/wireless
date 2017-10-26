@@ -1,0 +1,189 @@
+### Main configuration file for mesh-init script
+# Syntax for whole file is YAML: https://en.wikipedia.org/wiki/YAML
+
+interfaces:
+
+  ## List of interfaces to be used as a transport/carrier layer for BATMAN (OSI layer 2) frames.
+  ## All of these interfaces must be present,
+  ##  unambiguously matched and configurable for init process to indicate success.
+  ## Any number of interface matching/configuration sections can be present here.
+  ## All non-matched interfaces will be safely ignored.
+
+  ## match (mapping): specifies how to match this configuration to an interface.
+  ## If all matching options (index/mac/name) are empty, will simply be ignored.
+  ## If multiple matching options are specified for same interface,
+  ##  they all must match, so probably best to only use one of them for each interface.
+  - match:
+
+      ## index (integer): match interface by integer index.
+      ## 0 is always RPi's built-in ethernet card and 1 is RPi's built-in wifi,
+      ##  so 2 will be first USB dongle, sorted by consistent interface name.
+      ## Note that this numbering may change when dongles are plugged/unplugged.
+      index: 1 # examples: 0, 1, 2, 3, ...
+
+      ## mac (string): match interface by exact MAC address.
+      ## Format is six groups of two hex digits (case-insensitive)
+      ##  in transmission order, separated by colons or dashes.
+      mac: # examples: 36:65:67:f7:99:dc, 36-65-67-F7-99-DC
+
+      ## name: match interface by name, as it is assigned in the OS.
+      ## I.e. whatever "ip link" output displays for an interface.
+      name: # example: alfa-90647f
+
+    ## alias (string): alias for this interface to use for locating custom configuration files.
+    ## Will be used instead of the usual OS interface name, if specified.
+    ## E.g. if "link-A" is specified here, "hostapd.link-A.conf"
+    ##  will be looked-up for any custom settings, same for wpa_supplicant
+    ##  and any other optional interface-specific configuration files.
+    alias: # examples: south-antenna, wifi-to-house-64, eth, lan
+
+    ## wifi (mapping): parameters to be templated into default wifi configuration file.
+    ## Note that all parameters in this section except "role" will be ignored entirely
+    ##  if custom configuration file exists for interface, which will always be used as-is instead.
+    ## Ignored for RPi3 built-in ethernet interface.
+    wifi:
+
+      ## role (string): either "ap" or "sta", must be explicitly specified.
+      role: sta
+
+      ## channel (integer): 802.11a channel index to use with role=ap.
+      ## Usually supported values for 80MHz VHT channels: 36, 52, 100, 116, 132, 149
+      ## vht_oper_centr_freq_seg0_idx value for hostapd is selected automatically.
+      ## Completely ignored for role=sta.
+      channel: 36
+
+      ssid: ap # ssid for either create AP, or STA to connect to
+      passphrase: ap some-secret-passphrase # passphrase to use for either AP or STA
+
+
+  ## Example section, matching ALFA card by
+  ##  MAC address to use for mesh layer (type=mesh, default) in STA mode.
+  # - match: {mac: 00:c0:ca:90:64:7f}
+  #   wifi: {role: sta, ssid: 'The Banana Stand', passphrase: '12345678'}
+
+  ## Example section, matching any (first) non-built-in dongle
+  ##  to use in AP mode for LAN bridge and dhcp/ssh access.
+  # - match:
+  #     index: 2
+  #   wifi:
+  #     role: ap
+  #     channel: 100
+  #     ssid: Me-Fi
+  #     passphrase: hunter1234
+
+  ## Same exact thing as in previous example, only in more compact (one-liner) form.
+  # - {match: {index: 2}, wifi: {role: ap, channel: 100, ssid: Me-Fi, passphrase: hunter1234}}
+
+
+  ## Default match to use built-in ethernet interface for LAN.
+  ## Can be removed/overridden if necessary.
+  - {match: {index: 0}, type: lan}
+
+
+## net.rtl8812au (mapping): parameters for rtl8812au wifi driver module.
+net:
+  rtl8812au:
+    ## txpower (integer in 0-63 range): fixed transmission power value to set for all channels.
+    ## 1 is minimum power, 63 is maximum. 0 or empty value is to use driver defaults.
+    ## Defaults are 28-34 depending on channel/rate, see /proc/net/rtl8812au/alfa-*/tx_power_idx
+    ## Note: this override setting will not be reflected in nodes under /proc/net/rtl8812au, e.g. tx_power_idx
+    txpower:
+    ## extra-opts (string): rtl8812au module parameters to reload module with on start.
+    ## Run e.g. "modinfo rtl8812au | less" to see full list of these.
+    ## Note that most are also set by hostapd/wpa_supplicant (using ioctls), so many of them are useless here.
+    extra-opts: rtw_beamform_cap=0x63
+
+
+## led (mapping): parameters for LED indicators.
+## Each key/value corresponds to named event and can be disabled if set to null (empty) or false value.
+## "c2:blue:alive" is the built-in blue LED on ODROID-C2, any integer value can be used for GPIO line number.
+## Note: GPIO line number is not the same as physical pin number!
+led:
+
+  ## ip-address (empty/false, "act" or bcm_gpio number): blink last octet (8 bits) of IP address in a loop.
+  ## Only IP address assigned via DHCP is used here, not one assiged from "static-lan-addr".
+  ip-address: 'c2:blue:alive'
+
+  ## init-start: blink special sequence right after processing this configuration file and before anything else.
+  ## Mainly to indicate that there's no error in the config file, and that wifi stuff will be setup next.
+  init-start: 'c2:blue:alive'
+
+  ## init-success: blink special sequence after all interfaces were initialized as configured here.
+  ## Failure on any of the interface will prevent this indication, and that interface will be disabled.
+  init-success: 'c2:blue:alive'
+
+  ## init-state: gpio line number for LED to light-up on boot if there were no failures during init phase.
+  ## Note: GPIO line number is not the same as physical pin number!
+  init-state:
+
+
+## info-commands (mapping): list of files to generate under /boot/mesh/info/ on each boot from command outputs.
+## These commands will be passed to shell (bash), so should have any arguments with spaces quoted (see example below).
+## Stdout and stderr streams will be interleved and redirected to a specified file.
+## Note on exit code, if non-zero, will be appended to the end of command output.
+## Do not use long-running processes here, as these will be killed and can block init process.
+info-commands:
+  interfaces.txt: ip link
+  dmesg.log: dmesg -d | tail -2000
+  journal-boot.log: journalctl -ab | tail -3000
+  # long-shell-command.txt: 'echo "shell pid: $$"; for p in /boot/*; do stat "$p"; done'
+
+
+## lan-address (string): static IPv4/IPv6 address to assign to "lan" bridge on boot in addition to dhcp.
+## Should be in same format as you'd pass to "ip addr" command, and may contain a CIDR netmask.
+## If CIDR netmask is not specified, /24 will be used for IPv4 addresses and /64 for IPv6.
+## DHCP-received address(es), if any, will be assigned in addition to this one.
+## Can be a list of addresses to asign instead of just one, e.g.: [addr, addr2, ...]
+lan-address: # examples: 10.0.0.123, 192.168.88.5/16, 2401:642:8f00:6b:ce27:eb55:fe70:4149/96
+
+
+## ssh-pubkey (string or list): public key(s) in openssh format to allow root access for, instead of a default one(s).
+## Note that if anything is specified here, even invalid or non-working key, access with default one(s) is disabled.
+## Any existing stuff in /root/.ssh/authorized_keys will be overwritten by these.
+## Example (single key): ssh-pubkey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMaN55jjoXpzPzs8daxrZGWEpGMdKvLVPIyff/ngA24F'
+## Example (list of keys): ssh-pubkey: ['ssh-ed25519 ...', 'ssh-rsa ...', ...]
+ssh-pubkey: # leave empty to use default key(s)
+
+
+## root-password (string): root password to use for local access only.
+## This DOES NOT work over ssh - only access using keys is allowed there.
+root-password: # leave empty to use default access with login=root, password=root
+
+
+## metrics (mapping): configuration for monitoring setup.
+metrics:
+  ## role (string): either "node" or "hub" - whether node should be a hub for metrics.
+  ## "hub" is same as "node", but also collects metrics from all other nodes and starts webui for these.
+  ## There can be only one board setup as "hub" on the network!!!
+  role: node
+
+
+## extra-setup-commands (mapping): command or lists of these to run at specific hook points.
+## Note that only hook points with keys mentioned below are used, any other keys here will be ignored.
+## These commands are passed to shell (bash).
+extra-setup-commands:
+  lan-bridge-pre: # before "lan" bridge (for bat0 and eth0) is created and setup.
+  lan-bridge-post: # after "lan" bridge (for bat0 and eth0) is setup (probably doesn't had IP yet!).
+  mesh-setup-pre: # before BATMAN interface (bat0) is created and setup.
+  mesh-setup-post: # after BATMAN interface (bat0) is setup.
+    ## bridge-loop-avoidance is disabled here,
+    ##  as it should not be needed, and might introduce delays due to its checks.
+    - batctl bridge_loop_avoidance disable
+    ## Exmple - to enable BATMAN "gateway mode" and have this node act as DHCP server on the mesh.
+    ## Note that this mode should probably be either enabled
+    ##  on all boards (with most being clients) or none at all to work properly.
+    ## More info: https://www.open-mesh.org/projects/batman-adv/wiki/Gateways
+    # - batctl gw_mode server
+  wifi-start-pre: # before any wifi AP/STA daemons get started on all wifi interfaces.
+  wifi-start-post: # after all wifi AP/STA daemons get started on all wifi interfaces (probably not connected yet!).
+
+
+## path (mapping): section for specifying various paths, probably best left untouched.
+path:
+  info: '/boot/mesh/info' # for files from "info-commands" above
+  ap:
+    template: '/boot/mesh/hostapd.default.conf'
+    custom: '/boot/mesh/hostapd.{dev_or_alias}.conf'
+  sta:
+    template: '/boot/mesh/wpa_supplicant.default.conf'
+    custom: '/boot/mesh/wpa_supplicant.{dev_or_alias}.conf'
